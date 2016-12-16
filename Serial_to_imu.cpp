@@ -9,6 +9,8 @@
 #include <fcntl.h>          //文件控制定义
 #include <termios.h>    //PPSIX 终端控制定义
 #include <errno.h>        //错误号定义
+#include <string.h>
+#include <time.h>
 #include <iostream>
 
 float accl[3], angv[3], ang[3], Temp;
@@ -43,29 +45,32 @@ void Set_serial(int fd, int speed)
         }
 }
 
-void Re_save(unsigned char *Re_buf)
+void DecodeIMUData(unsigned char *reTemp)
 {
-        if(Re_buf[0]==0x55)      //检查帧头
+        if(reTemp[0]==0x55)      //检查帧头
         {
-            switch(Re_buf [1])
+            switch(reTemp[1])
             {
                    case 0x51:
-                       accl[0] = (short(Re_buf [3]<<8| Re_buf [2]))/32768.0*16;
-                       accl[1] = (short(Re_buf [5]<<8| Re_buf [4]))/32768.0*16;
-                       accl[2] = (short(Re_buf [7]<<8| Re_buf [6]))/32768.0*16;
-                       Temp = (short(Re_buf [9]<<8| Re_buf [8]))/340.0+36.25;
+                       accl[0] = (short(reTemp [3]<<8| reTemp [2]))/32768.0*16;
+                       accl[1] = (short(reTemp [5]<<8| reTemp [4]))/32768.0*16;
+                       accl[2] = (short(reTemp [7]<<8| reTemp [6]))/32768.0*16;
+                       Temp = (short(reTemp [9]<<8| reTemp [8]))/340.0+36.25;
+                       std::cout << "Acceleration x y z " << accl[0] << " " << accl[1] << " " << accl[2] <<  " Temperature " << Temp << std::endl;
                        break;
                    case 0x52:
-                       angv[0] = (short(Re_buf [3]<<8| Re_buf [2]))/32768.0*2000;
-                       angv[1] = (short(Re_buf [5]<<8| Re_buf [4]))/32768.0*2000;
-                       angv[2] = (short(Re_buf [7]<<8| Re_buf [6]))/32768.0*2000;
-                       Temp = (short(Re_buf [9]<<8| Re_buf [8]))/340.0+36.25;
+                       angv[0] = (short(reTemp [3]<<8| reTemp [2]))/32768.0*2000;
+                       angv[1] = (short(reTemp [5]<<8| reTemp [4]))/32768.0*2000;
+                       angv[2] = (short(reTemp [7]<<8| reTemp [6]))/32768.0*2000;
+                       Temp = (short(reTemp [9]<<8| reTemp [8]))/340.0+36.25;
+                       std::cout << "Angular velocity x y z " << angv[0] << " " << angv[1] << " " << angv[2] <<  " Temperature " << Temp << std::endl;
                        break;
                    case 0x53:
-                       ang[0] = (short(Re_buf [3]<<8| Re_buf [2]))/32768.0*180;
-                       ang[1] = (short(Re_buf [5]<<8| Re_buf [4]))/32768.0*180;
-                       ang[2] = (short(Re_buf [7]<<8| Re_buf [6]))/32768.0*180;
-                       Temp = (short(Re_buf [9]<<8| Re_buf [8]))/340.0+36.25;
+                       ang[0] = (short(reTemp [3]<<8| reTemp [2]))/32768.0*180;
+                       ang[1] = (short(reTemp [5]<<8| reTemp [4]))/32768.0*180;
+                       ang[2] = (short(reTemp [7]<<8| reTemp [6]))/32768.0*180;
+                       Temp = (short(reTemp [9]<<8| reTemp [8]))/340.0+36.25;
+                       std::cout << "Angle x y z " << ang[0] << " " << ang[1] << " " << ang[2] <<  " Temperature " << Temp << std::endl;
                        break;
             }
         }
@@ -80,40 +85,28 @@ int main()
                 perror("Can not Open Serial Port !");
                 return 0;
         }
-        Set_serial(fd, 9600);
+        Set_serial(fd, 115200);
 
-        unsigned char Re_buf[11];
-        int len = 0;
-        int sign = 0;
-        int readByte;
+        char reBuf[11];
+        unsigned char reTemp[10000];
+        int head = 0, end = 0; //head/end of the data
         while (true)
         {
-                readByte = read(fd, &Re_buf[len], 1);
-                if (readByte == 0) continue;
-                if ((len == 0) && (Re_buf[0] != 0x55)) continue;
-                while (len < 10)
+                head = 0;
+                end = read(fd, &reBuf[head], 3500); //each second read 3500Bytes to buffer | each 10ms MPU6050 send 33Bytes to PC
+                if (end == 0) continue;
+                while ((end - head + 1) >= 11)
                 {
-                        len++;
-                        readByte = read(fd, &Re_buf[len], len);
-                        if (readByte == 0)
+                        for (int i = 0; i <= 10; i++) reTemp[i] = reBuf[i+head];
+                        if (!((reTemp[0] == 0x55) & ((reTemp[1] == 0x51) | (reTemp[1] == 0x52) | (reTemp[1] == 0x53))))
                         {
-                                len = 0;
-                                break;
+                                head ++;
+                                continue;
                         }
+                        DecodeIMUData(reTemp);
+                        head += 11;
                 }
-                if (len == 11)
-                {
-                        len = 0;
-                        sign = 1;
-                }
-                if (sign == 1)
-                {
-                        Re_save(Re_buf);
-                        std::cout << "Acceleration x y z" << accl[0] << " " << accl[1] << " " << accl[2] << std::endl;
-                        std::cout << "Angular velocity x y z" << angv[0] << " " << angv[1] << " " << angv[2] << std::endl;
-                        std::cout << "Angle x y z" << ang[0] << " " << ang[1] << " " << ang[2] << std::endl;
-                        std::cout << "Temperature" << Temp << std::endl;
-                }
+                sleep(1); //3300Bytes each second ???
         }
         close(fd);
 }
